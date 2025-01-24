@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>GraphML Visualization with Animation</title>
-  <!-- Load D3.js (no integrity attribute) -->
+  <title>GraphML Floating Visualization</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.2/d3.min.js"></script>
   <style>
     body {
@@ -20,27 +19,33 @@
       border-bottom: 1px solid #ccc;
     }
     #fileInput {
-      margin: 5px;
       cursor: pointer;
     }
     svg {
       width: 100vw;
-      height: calc(100vh - 50px); /* subtract the controls bar from total height */
-      background: #fafafa;
+      height: calc(100vh - 50px);
+      background: #fefefe;
       display: block;
     }
+    /* "Professional" node style: gradient fill + drop shadow */
+    defs {
+      /* Example radial gradient for the node fill */
+    }
     .node circle {
-      cursor: pointer;
-      stroke: #555;
+      stroke: #333;
       stroke-width: 1px;
+      filter: url(#dropShadow);
     }
     .node text {
       font-size: 12px;
       pointer-events: none;
+      fill: #333;
+      font-family: sans-serif;
     }
     .link {
       stroke: #999;
       stroke-opacity: 0.6;
+      stroke-width: 2px;
     }
   </style>
 </head>
@@ -51,15 +56,34 @@
   <input type="file" id="fileInput" accept=".graphml, .xml"/>
 </div>
 
-<svg id="graph"></svg>
+<svg id="graph">
+  <!-- We will define a drop shadow and radial gradient inside <defs> -->
+  <defs>
+    <!-- Drop shadow filter -->
+    <filter id="dropShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"/>
+      <feOffset in="blur" dx="2" dy="3" result="offsetBlur"/>
+      <feMerge>
+        <feMergeNode in="offsetBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Example radial gradient for node fill -->
+    <radialGradient id="nodeGradient" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#69b3a2"/>
+    </radialGradient>
+  </defs>
+</svg>
 
 <script>
-// -----------------------------------------------------
-// 1) GLOBAL SELECTIONS & FORCE SIMULATION SETUP
-// -----------------------------------------------------
+/* -------------------------------------------------------
+   1) SETUP SVG & FORCE SIMULATION
+------------------------------------------------------- */
 const svg = d3.select("#graph");
 let width = window.innerWidth;
-let height = window.innerHeight - 50; // subtract controls' height
+let height = window.innerHeight - 50;
 
 svg.attr("width", width).attr("height", height);
 
@@ -69,20 +93,20 @@ window.addEventListener("resize", () => {
   svg.attr("width", width).attr("height", height);
 });
 
-// Create the force simulation
 const simulation = d3.forceSimulation()
-  .force("link", d3.forceLink().id(d => d.id).distance(100))
-  .force("charge", d3.forceManyBody().strength(-300))
-  .force("center", d3.forceCenter(width / 2, height / 2));
+  .force("link", d3.forceLink().id(d => d.id).distance(120))
+  .force("charge", d3.forceManyBody().strength(-350))
+  .force("center", d3.forceCenter(width / 2, height / 2))
+  // Lower the alphaDecay so it moves a bit more slowly:
+  .alphaDecay(0.02);
 
-// We create separate groups for edges and nodes.
+// We'll create separate groups for edges and nodes:
 const linkGroup = svg.append("g").attr("class", "links");
 const nodeGroup = svg.append("g").attr("class", "nodes");
 
-// -----------------------------------------------------
-// 2) FILE INPUT LISTENER
-//    Automatically loads file on selection
-// -----------------------------------------------------
+/* -------------------------------------------------------
+   2) FILE INPUT: READ GRAPHML
+------------------------------------------------------- */
 document.getElementById('fileInput').addEventListener('change', event => {
   const file = event.target.files[0];
   if (!file) return;
@@ -95,23 +119,21 @@ document.getElementById('fileInput').addEventListener('change', event => {
   reader.readAsText(file);
 });
 
-// -----------------------------------------------------
-// 3) PARSE & VISUALIZE GRAPHML
-// -----------------------------------------------------
+/* -------------------------------------------------------
+   3) PARSE & VISUALIZE
+------------------------------------------------------- */
 function visualizeGraphML(graphmlText) {
-  // Parse
   const { nodes, links } = parseGraphML(graphmlText);
   if (!nodes.length) {
     console.warn("No nodes found in GraphML.");
     return;
   }
 
-  // Clear existing graph elements
-  // (Remove old nodes & edges if any)
+  // Clear any old content
   linkGroup.selectAll("*").remove();
   nodeGroup.selectAll("*").remove();
 
-  // We'll pick the first node to "center" and show first
+  // Pick the first node as "center" node
   const centerNode = nodes[0];
   let drawnNodes = [centerNode];
   let drawnLinks = [];
@@ -119,19 +141,20 @@ function visualizeGraphML(graphmlText) {
   // Render just the center node
   renderGraph(drawnNodes, drawnLinks);
 
-  // Twinkle node, then show the rest
+  // Twinkle the center node, then render everything
   setTimeout(() => {
-    twinkleNode(centerNode.id, 3, 300, () => {
+    twinkleNode(centerNode.id, 3, 400, () => {
       drawnNodes = nodes;
       drawnLinks = links;
       renderGraph(drawnNodes, drawnLinks);
     });
-  }, 1000);
+  }, 800);
 }
 
-function parseGraphML(graphmlText) {
+/* Simple GraphML parser */
+function parseGraphML(text) {
   const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(graphmlText, "application/xml");
+  const xmlDoc = parser.parseFromString(text, "application/xml");
   const graphTag = xmlDoc.querySelector("graph");
   if (!graphTag) return { nodes: [], links: [] };
 
@@ -154,52 +177,62 @@ function parseGraphML(graphmlText) {
   return { nodes, links };
 }
 
-// -----------------------------------------------------
-// 4) RENDER GRAPH
-// -----------------------------------------------------
+/* -------------------------------------------------------
+   4) RENDER GRAPH
+------------------------------------------------------- */
 function renderGraph(renderNodes, renderLinks) {
   // BIND LINKS
-  const linkSel = linkGroup.selectAll("line.link")
-    .data(renderLinks, d => `${d.source}-${d.target}`);
+  const linkSel = linkGroup.selectAll(".link")
+    .data(renderLinks, d => d.source + "-" + d.target);
+
   linkSel.exit().remove();
 
   linkSel.enter()
     .append("line")
     .attr("class", "link")
-    .attr("stroke-width", 2)
     .attr("opacity", 0)
     .transition()
-    .duration(1000)
+    .duration(1200)
     .attr("opacity", 1);
 
   // BIND NODES
   const nodeSel = nodeGroup.selectAll(".node")
     .data(renderNodes, d => d.id);
+
   nodeSel.exit().remove();
 
   const nodeEnter = nodeSel.enter()
     .append("g")
     .attr("class", "node");
 
+  // Circle with gradient fill
   nodeEnter.append("circle")
-    .attr("r", 0) // Start radius at 0 for pop-in effect
-    .style("fill", "#69b3a2")
+    .attr("r", 0) // Start from radius 0 for a slower pop-in
+    .attr("fill", "url(#nodeGradient)")
     .transition()
-    .duration(600)
-    .attr("r", 15);
+    .duration(1500)
+    .ease(d3.easeCubicOut)
+    .attr("r", 18);
 
-  // Optional label
+  // Label
   nodeEnter.append("text")
-    .attr("dx", 20)
+    .attr("dx", 22)
     .attr("dy", ".35em")
+    .attr("fill", "#333")
     .text(d => d.id);
 
   nodeEnter.merge(nodeSel);
 
-  // UPDATE FORCE SIM
+  // Start the force simulation with these nodes
   simulation
     .nodes(renderNodes)
-    .on("tick", ticked);
+    .on("tick", ticked)
+    .on("end", () => {
+      // Once the simulation finishes, stop it
+      simulation.stop();
+      // Then apply a gentle floating effect to each node
+      applyFloatingEffect();
+    });
 
   simulation.force("link")
     .links(renderLinks);
@@ -218,9 +251,9 @@ function renderGraph(renderNodes, renderLinks) {
   }
 }
 
-// -----------------------------------------------------
-// 5) TWINKLE EFFECT
-// -----------------------------------------------------
+/* -------------------------------------------------------
+   5) TWINKLE EFFECT (blinking node color)
+------------------------------------------------------- */
 function twinkleNode(nodeId, repetitions, interval, callback) {
   let count = 0;
 
@@ -232,21 +265,57 @@ function twinkleNode(nodeId, repetitions, interval, callback) {
     circle
       .transition()
       .duration(interval / 2)
-      .style("fill", "#ff0000")
+      .attr("fill", "#ff0000")
       .transition()
       .duration(interval / 2)
-      .style("fill", "#69b3a2")
+      .attr("fill", "url(#nodeGradient)")
       .on("end", () => {
         count++;
         if (count < repetitions) {
           blink();
-        } else {
-          if (callback) callback();
+        } else if (callback) {
+          callback();
         }
       });
   }
   blink();
 }
+
+/* -------------------------------------------------------
+   6) FLOATING EFFECT
+   Once the simulation ends, let each node gently bob up/down forever
+------------------------------------------------------- */
+function applyFloatingEffect() {
+  nodeGroup.selectAll(".node").each(function(d) {
+    const nodeEl = d3.select(this);
+    const originalY = d.y; // capture final y from the force layout
+    floatUpDown(nodeEl, d.x, originalY);
+  });
+}
+
+// Recursively animate the node group up and down
+function floatUpDown(nodeEl, x, originalY) {
+  const amplitude = 5;     // vertical movement
+  const duration = 3000;   // total time for one up/down cycle
+
+  // Move up
+  nodeEl.transition()
+    .duration(duration / 2)
+    .ease(d3.easeSinInOut)
+    .attr("transform", `translate(${x}, ${originalY - amplitude})`)
+    .on("end", () => {
+      // Move down
+      nodeEl.transition()
+        .duration(duration / 2)
+        .ease(d3.easeSinInOut)
+        .attr("transform", `translate(${x}, ${originalY + amplitude})`)
+        .on("end", () => {
+          // Repeat indefinitely
+          floatUpDown(nodeEl, x, originalY);
+        });
+    });
+}
 </script>
+
 </body>
 </html>

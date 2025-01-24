@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>GraphML Visualization with Animation</title>
+  <!-- Load D3.js (no integrity attribute) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.2/d3.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+    }
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      background: #eee;
+      border-bottom: 1px solid #ccc;
+    }
+    #fileInput {
+      margin: 5px;
+      cursor: pointer;
+    }
+    svg {
+      width: 100vw;
+      height: calc(100vh - 50px); /* subtract the controls bar from total height */
+      background: #fafafa;
+      display: block;
+    }
+    .node circle {
+      cursor: pointer;
+      stroke: #555;
+      stroke-width: 1px;
+    }
+    .node text {
+      font-size: 12px;
+      pointer-events: none;
+    }
+    .link {
+      stroke: #999;
+      stroke-opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <label for="fileInput">Upload GraphML file:</label>
+  <input type="file" id="fileInput" accept=".graphml, .xml"/>
+</div>
+
+<svg id="graph"></svg>
+
+<script>
+// -----------------------------------------------------
+// 1) GLOBAL SELECTIONS & FORCE SIMULATION SETUP
+// -----------------------------------------------------
+const svg = d3.select("#graph");
+let width = window.innerWidth;
+let height = window.innerHeight - 50; // subtract controls' height
+
+svg.attr("width", width).attr("height", height);
+
+window.addEventListener("resize", () => {
+  width = window.innerWidth;
+  height = window.innerHeight - 50;
+  svg.attr("width", width).attr("height", height);
+});
+
+// Create the force simulation
+const simulation = d3.forceSimulation()
+  .force("link", d3.forceLink().id(d => d.id).distance(100))
+  .force("charge", d3.forceManyBody().strength(-300))
+  .force("center", d3.forceCenter(width / 2, height / 2));
+
+// We create separate groups for edges and nodes.
+const linkGroup = svg.append("g").attr("class", "links");
+const nodeGroup = svg.append("g").attr("class", "nodes");
+
+// -----------------------------------------------------
+// 2) FILE INPUT LISTENER
+//    Automatically loads file on selection
+// -----------------------------------------------------
+document.getElementById('fileInput').addEventListener('change', event => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const graphmlString = e.target.result;
+    visualizeGraphML(graphmlString);
+  };
+  reader.readAsText(file);
+});
+
+// -----------------------------------------------------
+// 3) PARSE & VISUALIZE GRAPHML
+// -----------------------------------------------------
+function visualizeGraphML(graphmlText) {
+  // Parse
+  const { nodes, links } = parseGraphML(graphmlText);
+  if (!nodes.length) {
+    console.warn("No nodes found in GraphML.");
+    return;
+  }
+
+  // Clear existing graph elements
+  // (Remove old nodes & edges if any)
+  linkGroup.selectAll("*").remove();
+  nodeGroup.selectAll("*").remove();
+
+  // We'll pick the first node to "center" and show first
+  const centerNode = nodes[0];
+  let drawnNodes = [centerNode];
+  let drawnLinks = [];
+
+  // Render just the center node
+  renderGraph(drawnNodes, drawnLinks);
+
+  // Twinkle node, then show the rest
+  setTimeout(() => {
+    twinkleNode(centerNode.id, 3, 300, () => {
+      drawnNodes = nodes;
+      drawnLinks = links;
+      renderGraph(drawnNodes, drawnLinks);
+    });
+  }, 1000);
+}
+
+function parseGraphML(graphmlText) {
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(graphmlText, "application/xml");
+  const graphTag = xmlDoc.querySelector("graph");
+  if (!graphTag) return { nodes: [], links: [] };
+
+  const nodeTags = graphTag.querySelectorAll("node");
+  const edgeTags = graphTag.querySelectorAll("edge");
+
+  const nodes = [];
+  nodeTags.forEach(n => {
+    nodes.push({ id: n.getAttribute("id") });
+  });
+
+  const links = [];
+  edgeTags.forEach(e => {
+    links.push({
+      source: e.getAttribute("source"),
+      target: e.getAttribute("target")
+    });
+  });
+
+  return { nodes, links };
+}
+
+// -----------------------------------------------------
+// 4) RENDER GRAPH
+// -----------------------------------------------------
+function renderGraph(renderNodes, renderLinks) {
+  // BIND LINKS
+  const linkSel = linkGroup.selectAll("line.link")
+    .data(renderLinks, d => `${d.source}-${d.target}`);
+  linkSel.exit().remove();
+
+  linkSel.enter()
+    .append("line")
+    .attr("class", "link")
+    .attr("stroke-width", 2)
+    .attr("opacity", 0)
+    .transition()
+    .duration(1000)
+    .attr("opacity", 1);
+
+  // BIND NODES
+  const nodeSel = nodeGroup.selectAll(".node")
+    .data(renderNodes, d => d.id);
+  nodeSel.exit().remove();
+
+  const nodeEnter = nodeSel.enter()
+    .append("g")
+    .attr("class", "node");
+
+  nodeEnter.append("circle")
+    .attr("r", 0) // Start radius at 0 for pop-in effect
+    .style("fill", "#69b3a2")
+    .transition()
+    .duration(600)
+    .attr("r", 15);
+
+  // Optional label
+  nodeEnter.append("text")
+    .attr("dx", 20)
+    .attr("dy", ".35em")
+    .text(d => d.id);
+
+  nodeEnter.merge(nodeSel);
+
+  // UPDATE FORCE SIM
+  simulation
+    .nodes(renderNodes)
+    .on("tick", ticked);
+
+  simulation.force("link")
+    .links(renderLinks);
+
+  simulation.alpha(1).restart();
+
+  function ticked() {
+    linkGroup.selectAll(".link")
+      .attr("x1", d => d.source.x)
+      .attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x)
+      .attr("y2", d => d.target.y);
+
+    nodeGroup.selectAll(".node")
+      .attr("transform", d => `translate(${d.x},${d.y})`);
+  }
+}
+
+// -----------------------------------------------------
+// 5) TWINKLE EFFECT
+// -----------------------------------------------------
+function twinkleNode(nodeId, repetitions, interval, callback) {
+  let count = 0;
+
+  function blink() {
+    const circle = nodeGroup.selectAll(".node")
+      .filter(d => d.id === nodeId)
+      .select("circle");
+
+    circle
+      .transition()
+      .duration(interval / 2)
+      .style("fill", "#ff0000")
+      .transition()
+      .duration(interval / 2)
+      .style("fill", "#69b3a2")
+      .on("end", () => {
+        count++;
+        if (count < repetitions) {
+          blink();
+        } else {
+          if (callback) callback();
+        }
+      });
+  }
+  blink();
+}
+</script>
+</body>
+</html>

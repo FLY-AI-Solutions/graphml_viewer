@@ -3,10 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <title>GraphML Visualization with Animation</title>
-  <!-- Include D3.js (v7 or higher). Adjust version/CDN as needed. -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.2/d3.min.js"
-          integrity="sha512-qJqY/WVUmqJ9OAbfCteOb1PtzqcLr0Uh9/QnBUZWUmGpG8lyHvVoTwxTr8hcRGH7qFhDIscB/HxcG3IIBK1xIA=="
-          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <!-- 1) Load D3 without SRI attributes -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.2/d3.min.js"></script>
   <style>
     body {
       margin: 0;
@@ -49,103 +47,22 @@
   <input type="file" id="fileInput" accept=".graphml, .xml"/>
 </div>
 
+<!-- 2) The SVG where we'll draw the graph -->
 <svg id="graph"></svg>
 
 <script>
-// ---------------------------------------------------------------------------
-// 1. File upload event:
-//    When a user selects a file, we'll load it, parse it, and visualize.
-// ---------------------------------------------------------------------------
-document.getElementById('fileInput').addEventListener('change', event => {
-  const file = event.target.files[0];
-  if (!file) return;
+/* --------------------------------------------
+   GLOBAL SELECTORS & INITIAL SETUP
+--------------------------------------------- */
 
-  const reader = new FileReader();
-  reader.onload = e => {
-    const graphmlString = e.target.result;
-    // Now we can parse the GraphML and visualize it
-    visualizeGraphML(graphmlString);
-  };
-  reader.readAsText(file);
-});
-
-// ---------------------------------------------------------------------------
-// 2. Core function: parse & visualize GraphML
-// ---------------------------------------------------------------------------
-function visualizeGraphML(graphmlText) {
-  // Parse GraphML
-  const { nodes, links } = parseGraphML(graphmlText);
-
-  // Clear any previous SVG content
-  svg.selectAll("*").remove();
-
-  // We'll pick a "center node" to show first (e.g., the first node),
-  // but you can choose by ID or any other logic
-  const centerNode = nodes[0];
-  let drawnNodes = [centerNode];
-  let drawnLinks = [];
-
-  // Render only the center node
-  renderGraph(drawnNodes, drawnLinks);
-
-  // After a short delay, twinkle the center node
-  // then add the rest of the graph
-  setTimeout(() => {
-    twinkleNode(centerNode.id, 3, 300, () => {
-      drawnNodes = nodes; // all nodes
-      drawnLinks = links; // all edges
-      renderGraph(drawnNodes, drawnLinks);
-    });
-  }, 1000);
-}
-
-// ---------------------------------------------------------------------------
-// 3. Parse GraphML
-//    You can adapt this to capture additional node/edge attributes.
-// ---------------------------------------------------------------------------
-function parseGraphML(graphmlText) {
-  const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(graphmlText, "application/xml");
-
-  // Find the <graph> element
-  const graphTag = xmlDoc.querySelector("graph");
-  if (!graphTag) {
-    console.error("No <graph> element found in GraphML.");
-    return { nodes: [], links: [] };
-  }
-
-  // Extract <node> tags
-  const nodeTags = graphTag.querySelectorAll("node");
-  const nodes = [];
-  nodeTags.forEach(node => {
-    nodes.push({
-      id: node.getAttribute("id")
-      // Add more attributes here if needed:
-      // data: parse additional <data> elements, etc.
-    });
-  });
-
-  // Extract <edge> tags
-  const edgeTags = graphTag.querySelectorAll("edge");
-  const links = [];
-  edgeTags.forEach(edge => {
-    links.push({
-      source: edge.getAttribute("source"),
-      target: edge.getAttribute("target")
-      // Add weight, keywords, etc. as needed
-    });
-  });
-
-  return { nodes, links };
-}
-
-// ---------------------------------------------------------------------------
-// 4. Setup global references for the SVG and its dimensions
-//    We'll create them once, then update in renderGraph().
-// ---------------------------------------------------------------------------
+// Make sure we define svg and the simulation first
 const svg = d3.select("#graph");
+
+// We'll use these for width/height and keep them updated on resize
 let width = window.innerWidth;
-let height = window.innerHeight - 50; // subtract controls bar height
+let height = window.innerHeight - 50; // subtract the controls bar's height
+
+svg.attr("width", width).attr("height", height);
 
 window.addEventListener("resize", () => {
   width = window.innerWidth;
@@ -153,28 +70,112 @@ window.addEventListener("resize", () => {
   svg.attr("width", width).attr("height", height);
 });
 
+// Create the force simulation
 const simulation = d3.forceSimulation()
   .force("link", d3.forceLink().id(d => d.id).distance(100))
   .force("charge", d3.forceManyBody().strength(-300))
-  .force("center", d3.forceCenter(width / 2, (height / 2)));
+  .force("center", d3.forceCenter(width / 2, height / 2));
 
-// We'll create top-level groups for edges and nodes
+// We'll create separate groups in the SVG for edges and nodes
 const linkGroup = svg.append("g").attr("class", "links");
 const nodeGroup = svg.append("g").attr("class", "nodes");
 
-// ---------------------------------------------------------------------------
-// 5. Render the graph (or subgraph) with animation
-// ---------------------------------------------------------------------------
+/* --------------------------------------------
+   FILE INPUT HANDLER
+--------------------------------------------- */
+
+// Listen for file selections
+document.getElementById('fileInput').addEventListener('change', event => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const graphmlString = e.target.result;
+    visualizeGraphML(graphmlString);
+  };
+  reader.readAsText(file);
+});
+
+/* --------------------------------------------
+   PARSE & VISUALIZE
+--------------------------------------------- */
+
+function visualizeGraphML(graphmlText) {
+  const { nodes, links } = parseGraphML(graphmlText);
+
+  // Clear any old content
+  svg.selectAll("*").not(".links").not(".nodes").remove();
+  linkGroup.selectAll("*").remove();
+  nodeGroup.selectAll("*").remove();
+
+  if (!nodes.length) {
+    console.warn("No nodes parsed from GraphML.");
+    return;
+  }
+
+  // Take first node as "center" to appear first
+  const centerNode = nodes[0];
+  let drawnNodes = [centerNode];
+  let drawnLinks = [];
+
+  // Render just the center node
+  renderGraph(drawnNodes, drawnLinks);
+
+  // Twinkle, then show rest
+  setTimeout(() => {
+    twinkleNode(centerNode.id, 3, 300, () => {
+      // Now show all
+      drawnNodes = nodes;
+      drawnLinks = links;
+      renderGraph(drawnNodes, drawnLinks);
+    });
+  }, 1000);
+}
+
+/* --------------------------------------------
+   PARSE GRAPHML
+--------------------------------------------- */
+
+function parseGraphML(graphmlText) {
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(graphmlText, "application/xml");
+
+  const graphTag = xmlDoc.querySelector("graph");
+  if (!graphTag) {
+    return { nodes: [], links: [] };
+  }
+
+  const nodeTags = graphTag.querySelectorAll("node");
+  const edgeTags = graphTag.querySelectorAll("edge");
+
+  const nodes = [];
+  nodeTags.forEach(tag => {
+    nodes.push({ id: tag.getAttribute("id") });
+  });
+
+  const links = [];
+  edgeTags.forEach(tag => {
+    links.push({
+      source: tag.getAttribute("source"),
+      target: tag.getAttribute("target")
+    });
+  });
+
+  return { nodes, links };
+}
+
+/* --------------------------------------------
+   RENDER GRAPH
+--------------------------------------------- */
+
 function renderGraph(renderNodes, renderLinks) {
-
-  // 5.1. LINKS
+  // Bind links
   const linkSel = linkGroup.selectAll("line.link")
-    .data(renderLinks, d => d.source + "-" + d.target);
+    .data(renderLinks, d => `${d.source}-${d.target}`);
 
-  // Remove old links
   linkSel.exit().remove();
 
-  // Add new links
   linkSel.enter()
     .append("line")
     .attr("class", "link")
@@ -184,36 +185,32 @@ function renderGraph(renderNodes, renderLinks) {
     .duration(1000)
     .attr("opacity", 1);
 
-  // 5.2. NODES
+  // Bind nodes
   const nodeSel = nodeGroup.selectAll(".node")
     .data(renderNodes, d => d.id);
 
-  // Remove old nodes
   nodeSel.exit().remove();
 
-  // Add new nodes
   const nodeEnter = nodeSel.enter()
     .append("g")
     .attr("class", "node");
 
-  // Circle
   nodeEnter.append("circle")
-    .attr("r", 0) // Start from radius 0 for a pop-in effect
+    .attr("r", 0) // start radius at 0 for pop-in effect
     .style("fill", "#69b3a2")
     .transition()
     .duration(600)
     .attr("r", 15);
 
-  // Optional text label
+  // optional label
   nodeEnter.append("text")
     .attr("dx", 20)
     .attr("dy", ".35em")
     .text(d => d.id);
 
-  // Merge the new nodes with existing for the force simulation
   nodeEnter.merge(nodeSel);
 
-  // 5.3. Update force simulation
+  // Update force simulation
   simulation
     .nodes(renderNodes)
     .on("tick", ticked);
@@ -231,23 +228,22 @@ function renderGraph(renderNodes, renderLinks) {
       .attr("y2", d => d.target.y);
 
     nodeGroup.selectAll(".node")
-      .attr("transform", d => `translate(${d.x},${d.y})`);
+      .attr("transform", d => `translate(${d.x}, ${d.y})`);
   }
 }
 
-// ---------------------------------------------------------------------------
-// 6. "Twinkle" animation for a given node
-//    Repeatedly flashes the node circle color a few times.
-// ---------------------------------------------------------------------------
+/* --------------------------------------------
+   TWINKLE EFFECT
+--------------------------------------------- */
+
 function twinkleNode(nodeId, repetitions, interval, callback) {
   let count = 0;
 
-  const blink = () => {
+  function blink() {
     const circle = svg.selectAll(".node")
       .filter(d => d.id === nodeId)
       .select("circle");
 
-    // Animate fill color from normal to red, then back
     circle
       .transition()
       .duration(interval / 2)
@@ -258,13 +254,12 @@ function twinkleNode(nodeId, repetitions, interval, callback) {
       .on("end", () => {
         count++;
         if (count < repetitions) {
-          blink(); // keep blinking
+          blink();
         } else {
-          if (callback) callback(); // done
+          if (callback) callback();
         }
       });
-  };
-
+  }
   blink();
 }
 </script>

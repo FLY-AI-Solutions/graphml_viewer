@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>GraphML Visualization with Animation</title>
-  <!-- 1) Load D3 without SRI attributes -->
+  <!-- Load D3.js (no integrity attribute) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.2/d3.min.js"></script>
   <style>
     body {
@@ -12,16 +12,20 @@
       font-family: sans-serif;
     }
     #controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       padding: 10px;
       background: #eee;
       border-bottom: 1px solid #ccc;
     }
     #fileInput {
       margin: 5px;
+      cursor: pointer;
     }
     svg {
       width: 100vw;
-      height: calc(100vh - 50px); /* adjust for the controls bar */
+      height: calc(100vh - 50px); /* subtract the controls bar from total height */
       background: #fafafa;
       display: block;
     }
@@ -47,20 +51,15 @@
   <input type="file" id="fileInput" accept=".graphml, .xml"/>
 </div>
 
-<!-- 2) The SVG where we'll draw the graph -->
 <svg id="graph"></svg>
 
 <script>
-/* --------------------------------------------
-   GLOBAL SELECTORS & INITIAL SETUP
---------------------------------------------- */
-
-// Make sure we define svg and the simulation first
+// -----------------------------------------------------
+// 1) GLOBAL SELECTIONS & FORCE SIMULATION SETUP
+// -----------------------------------------------------
 const svg = d3.select("#graph");
-
-// We'll use these for width/height and keep them updated on resize
 let width = window.innerWidth;
-let height = window.innerHeight - 50; // subtract the controls bar's height
+let height = window.innerHeight - 50; // subtract controls' height
 
 svg.attr("width", width).attr("height", height);
 
@@ -76,15 +75,14 @@ const simulation = d3.forceSimulation()
   .force("charge", d3.forceManyBody().strength(-300))
   .force("center", d3.forceCenter(width / 2, height / 2));
 
-// We'll create separate groups in the SVG for edges and nodes
+// We create separate groups for edges and nodes.
 const linkGroup = svg.append("g").attr("class", "links");
 const nodeGroup = svg.append("g").attr("class", "nodes");
 
-/* --------------------------------------------
-   FILE INPUT HANDLER
---------------------------------------------- */
-
-// Listen for file selections
+// -----------------------------------------------------
+// 2) FILE INPUT LISTENER
+//    Automatically loads file on selection
+// -----------------------------------------------------
 document.getElementById('fileInput').addEventListener('change', event => {
   const file = event.target.files[0];
   if (!file) return;
@@ -97,24 +95,23 @@ document.getElementById('fileInput').addEventListener('change', event => {
   reader.readAsText(file);
 });
 
-/* --------------------------------------------
-   PARSE & VISUALIZE
---------------------------------------------- */
-
+// -----------------------------------------------------
+// 3) PARSE & VISUALIZE GRAPHML
+// -----------------------------------------------------
 function visualizeGraphML(graphmlText) {
+  // Parse
   const { nodes, links } = parseGraphML(graphmlText);
-
-  // Clear any old content
-  svg.selectAll("*").not(".links").not(".nodes").remove();
-  linkGroup.selectAll("*").remove();
-  nodeGroup.selectAll("*").remove();
-
   if (!nodes.length) {
-    console.warn("No nodes parsed from GraphML.");
+    console.warn("No nodes found in GraphML.");
     return;
   }
 
-  // Take first node as "center" to appear first
+  // Clear existing graph elements
+  // (Remove old nodes & edges if any)
+  linkGroup.selectAll("*").remove();
+  nodeGroup.selectAll("*").remove();
+
+  // We'll pick the first node to "center" and show first
   const centerNode = nodes[0];
   let drawnNodes = [centerNode];
   let drawnLinks = [];
@@ -122,10 +119,9 @@ function visualizeGraphML(graphmlText) {
   // Render just the center node
   renderGraph(drawnNodes, drawnLinks);
 
-  // Twinkle, then show rest
+  // Twinkle node, then show the rest
   setTimeout(() => {
     twinkleNode(centerNode.id, 3, 300, () => {
-      // Now show all
       drawnNodes = nodes;
       drawnLinks = links;
       renderGraph(drawnNodes, drawnLinks);
@@ -133,47 +129,38 @@ function visualizeGraphML(graphmlText) {
   }, 1000);
 }
 
-/* --------------------------------------------
-   PARSE GRAPHML
---------------------------------------------- */
-
 function parseGraphML(graphmlText) {
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(graphmlText, "application/xml");
-
   const graphTag = xmlDoc.querySelector("graph");
-  if (!graphTag) {
-    return { nodes: [], links: [] };
-  }
+  if (!graphTag) return { nodes: [], links: [] };
 
   const nodeTags = graphTag.querySelectorAll("node");
   const edgeTags = graphTag.querySelectorAll("edge");
 
   const nodes = [];
-  nodeTags.forEach(tag => {
-    nodes.push({ id: tag.getAttribute("id") });
+  nodeTags.forEach(n => {
+    nodes.push({ id: n.getAttribute("id") });
   });
 
   const links = [];
-  edgeTags.forEach(tag => {
+  edgeTags.forEach(e => {
     links.push({
-      source: tag.getAttribute("source"),
-      target: tag.getAttribute("target")
+      source: e.getAttribute("source"),
+      target: e.getAttribute("target")
     });
   });
 
   return { nodes, links };
 }
 
-/* --------------------------------------------
-   RENDER GRAPH
---------------------------------------------- */
-
+// -----------------------------------------------------
+// 4) RENDER GRAPH
+// -----------------------------------------------------
 function renderGraph(renderNodes, renderLinks) {
-  // Bind links
+  // BIND LINKS
   const linkSel = linkGroup.selectAll("line.link")
     .data(renderLinks, d => `${d.source}-${d.target}`);
-
   linkSel.exit().remove();
 
   linkSel.enter()
@@ -185,10 +172,9 @@ function renderGraph(renderNodes, renderLinks) {
     .duration(1000)
     .attr("opacity", 1);
 
-  // Bind nodes
+  // BIND NODES
   const nodeSel = nodeGroup.selectAll(".node")
     .data(renderNodes, d => d.id);
-
   nodeSel.exit().remove();
 
   const nodeEnter = nodeSel.enter()
@@ -196,13 +182,13 @@ function renderGraph(renderNodes, renderLinks) {
     .attr("class", "node");
 
   nodeEnter.append("circle")
-    .attr("r", 0) // start radius at 0 for pop-in effect
+    .attr("r", 0) // Start radius at 0 for pop-in effect
     .style("fill", "#69b3a2")
     .transition()
     .duration(600)
     .attr("r", 15);
 
-  // optional label
+  // Optional label
   nodeEnter.append("text")
     .attr("dx", 20)
     .attr("dy", ".35em")
@@ -210,7 +196,7 @@ function renderGraph(renderNodes, renderLinks) {
 
   nodeEnter.merge(nodeSel);
 
-  // Update force simulation
+  // UPDATE FORCE SIM
   simulation
     .nodes(renderNodes)
     .on("tick", ticked);
@@ -228,19 +214,18 @@ function renderGraph(renderNodes, renderLinks) {
       .attr("y2", d => d.target.y);
 
     nodeGroup.selectAll(".node")
-      .attr("transform", d => `translate(${d.x}, ${d.y})`);
+      .attr("transform", d => `translate(${d.x},${d.y})`);
   }
 }
 
-/* --------------------------------------------
-   TWINKLE EFFECT
---------------------------------------------- */
-
+// -----------------------------------------------------
+// 5) TWINKLE EFFECT
+// -----------------------------------------------------
 function twinkleNode(nodeId, repetitions, interval, callback) {
   let count = 0;
 
   function blink() {
-    const circle = svg.selectAll(".node")
+    const circle = nodeGroup.selectAll(".node")
       .filter(d => d.id === nodeId)
       .select("circle");
 
